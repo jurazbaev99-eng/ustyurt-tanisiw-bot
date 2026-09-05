@@ -12,7 +12,6 @@ const db = getDatabase(firebaseApp);
 const bot = new Telegraf('8610376144:AAGU1xG-mSmAb6-30qgiyWHzUY3RUFt5O6M');
 const CHANNEL_LINK = 'https://t.me/ustyurt_tanisiw';
 
-// ⚠️ BU YERGA O'ZINGIZNING TELEGRAM ID RAQamingizni yozing:
 const ADMIN_ID = 7470599966; 
 
 const searchSession = {}; 
@@ -157,6 +156,7 @@ bot.use(session());
 bot.use(stage.middleware());
 
 bot.start(async (ctx) => {
+  await ctx.scene.leave(); // Agar anketada bo'lsa chiqib ketadi
   const userId = ctx.from.id;
   const snapshot = await get(ref(db, 'users/' + userId));
   
@@ -179,6 +179,7 @@ bot.start(async (ctx) => {
 });
 
 const resetAccount = async (ctx) => {
+  await ctx.scene.leave(); // Sahnadan chiqib ketish
   const userId = ctx.from.id;
   await remove(ref(db, 'users/' + userId));
   await remove(ref(db, 'likes/' + userId));
@@ -191,10 +192,13 @@ const resetAccount = async (ctx) => {
   });
 };
 
-bot.command('reset', resetAccount);
+bot.command('reset', (ctx) => {
+  resetAccount(ctx);
+});
 
 // ADMIN PANEL BUYRUG'I
 bot.command('admin', async (ctx) => {
+  await ctx.scene.leave(); // Agar anketada bo'lsa darhol chiqazib yuboradi
   const userId = ctx.from.id;
   
   if (userId !== ADMIN_ID) {
@@ -489,7 +493,7 @@ bot.action('stop_search', async (ctx) => {
 });
 
 bot.launch();
-console.log('Bot admin panel bilan muvaffaqiyatli ishga tushdi...');
+console.log('Bot muvaffaqiyatli ishga tushdi...');
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
