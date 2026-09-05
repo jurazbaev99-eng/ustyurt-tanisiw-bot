@@ -12,6 +12,9 @@ const db = getDatabase(firebaseApp);
 const bot = new Telegraf('8610376144:AAGU1xG-mSmAb6-30qgiyWHzUY3RUFt5O6M');
 const CHANNEL_LINK = 'https://t.me/ustyurt_tanisiw';
 
+// ⚠️ BU YERGA O'ZINGIZNING TELEGRAM ID RAQamingizni yozing:
+const ADMIN_ID = 7470599966; 
+
 const searchSession = {}; 
 
 // 1. ANKETA SAHNASI (WIZARD)
@@ -189,6 +192,36 @@ const resetAccount = async (ctx) => {
 };
 
 bot.command('reset', resetAccount);
+
+// ADMIN PANEL BUYRUG'I
+bot.command('admin', async (ctx) => {
+  const userId = ctx.from.id;
+  
+  if (userId !== ADMIN_ID) {
+    return ctx.reply("❌ Bu buyruq faqat bot admini uchun!");
+  }
+
+  const snapshot = await get(ref(db, 'users'));
+  if (!snapshot.exists()) {
+    return ctx.reply("📊 Hozircha bazada foydalanuvchilar yo'q.");
+  }
+
+  const usersObj = snapshot.val();
+  const usersArray = Object.values(usersObj);
+  let totalUsers = usersArray.length;
+
+  let message = `📊 <b>ADMIN PANEL: STATISTIKA</b>\n\n`;
+  message += `👥 Jami ro'yxatdan o'tganlar: <b>${totalUsers} ta</b>\n\n`;
+  message += `<b>Oxirgi ro'yxatdan o'tganlar:</b>\n`;
+
+  const recentUsers = usersArray.slice(-10).reverse();
+  recentUsers.forEach((u, index) => {
+    const usernameLink = u.username ? `@${u.username}` : `ID: ${u.userId}`;
+    message += `${index + 1}. <b>${u.name}</b> (${u.age} jas, ${u.district}) — ${usernameLink}\n`;
+  });
+
+  ctx.reply(message, { parse_mode: 'HTML' });
+});
 
 bot.hears('⚙️ Sazlamalar', (ctx) => {
   ctx.reply("⚙️ <b>Sazlamalar bólimi:</b>\n\n📢 <i>Kanalimiz:</i> <b>@ustyurt_tanisiw</b>", {
@@ -456,7 +489,7 @@ bot.action('stop_search', async (ctx) => {
 });
 
 bot.launch();
-console.log('Bot kanal manzili bilan muvaffaqiyatli ishga tushdi...');
+console.log('Bot admin panel bilan muvaffaqiyatli ishga tushdi...');
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
