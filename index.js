@@ -156,7 +156,7 @@ bot.use(session());
 bot.use(stage.middleware());
 
 bot.start(async (ctx) => {
-  await ctx.scene.leave(); // Agar anketada bo'lsa chiqib ketadi
+  await ctx.scene.leave(); 
   const userId = ctx.from.id;
   const snapshot = await get(ref(db, 'users/' + userId));
   
@@ -179,7 +179,7 @@ bot.start(async (ctx) => {
 });
 
 const resetAccount = async (ctx) => {
-  await ctx.scene.leave(); // Sahnadan chiqib ketish
+  await ctx.scene.leave(); 
   const userId = ctx.from.id;
   await remove(ref(db, 'users/' + userId));
   await remove(ref(db, 'likes/' + userId));
@@ -196,9 +196,9 @@ bot.command('reset', (ctx) => {
   resetAccount(ctx);
 });
 
-// ADMIN PANEL BUYRUG'I
+// ADMIN PANEL STATISTIKA
 bot.command('admin', async (ctx) => {
-  await ctx.scene.leave(); // Agar anketada bo'lsa darhol chiqazib yuboradi
+  await ctx.scene.leave(); 
   const userId = ctx.from.id;
   
   if (userId !== ADMIN_ID) {
@@ -225,6 +225,47 @@ bot.command('admin', async (ctx) => {
   });
 
   ctx.reply(message, { parse_mode: 'HTML' });
+});
+
+// 📢 HAMMAGA XABAR YUBORISH (BROADCAST)
+bot.command('habar', async (ctx) => {
+  await ctx.scene.leave();
+  const userId = ctx.from.id;
+
+  if (userId !== ADMIN_ID) {
+    return ctx.reply("❌ Bu buyruq faqat bot admini uchun!");
+  }
+
+  // /habar so'zidan keyingi matnni ajratib olamiz
+  const textMessage = ctx.message.text.replace('/habar', '').trim();
+
+  if (!textMessage) {
+    return ctx.reply("⚠️ <b>Xato!</b> Xabar yuborish uchun /habar buyrug'idan keyin matn yozing.\n<i>Mısalı: /habar Barchaga salom!</i>", { parse_mode: 'HTML' });
+  }
+
+  const snapshot = await get(ref(db, 'users'));
+  if (!snapshot.exists()) {
+    return ctx.reply("📊 Bazada foydalanuvchilar topilmadi.");
+  }
+
+  const usersObj = snapshot.val();
+  const userIds = Object.keys(usersObj);
+
+  let successCount = 0;
+  let failCount = 0;
+
+  ctx.reply(`⏳ Xabar tarqatish boshlandi... Jami foydalanuvchilar: ${userIds.length} ta`);
+
+  for (const id of userIds) {
+    try {
+      await bot.telegram.sendMessage(id, `📢 <b>XABARNOMA:</b>\n\n${textMessage}`, { parse_mode: 'HTML' });
+      successCount++;
+    } catch (e) {
+      failCount++; // Agar foydalanuvchi botni bloklagan bo'lsa xatoga tushadi
+    }
+  }
+
+  ctx.reply(`✅ <b>Xabar tarqatish yakunlandi!</b>\n\n• Muvaffaqiyatli yuborildi: <b>${successCount} ta</b>\n• Yuborilmadi (bloklaganlar): <b>${failCount} ta</b>`, { parse_mode: 'HTML' });
 });
 
 bot.hears('⚙️ Sazlamalar', (ctx) => {
