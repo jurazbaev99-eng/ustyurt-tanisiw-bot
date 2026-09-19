@@ -1,540 +1,381 @@
-const { Telegraf, Scenes, session, Markup } = require('telegraf');
-const { initializeApp } = require('firebase/app');
-const { getDatabase, ref, set, get, remove } = require('firebase/database');
+require('dotenv').config();
+const { Telegraf } = require('telegraf');
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
 
-const firebaseConfig = {
-  databaseURL: "https://ustyurttanisiw-default-rtdb.firebaseio.com"
+// ==========================================
+// RENDER PORT TALABINI QONDIRISH (Web Service)
+// ==========================================
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot is running and alive!\n');
+}).listen(PORT, () => {
+    console.log(`Server is listening on port ${PORT}`);
+});
+
+const dbPath = path.join(__dirname, 'database.json');
+
+const readDB = () => {
+    try {
+        const data = fs.readFileSync(dbPath, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        return { tasks: {} };
+    }
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getDatabase(firebaseApp);
+const writeDB = (data) => {
+    fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
+};
 
-const bot = new Telegraf('8610376144:AAGU1xG-mSmAb6-30qgiyWHzUY3RUFt5O6M');
-const CHANNEL_LINK = 'https://t.me/ustyurt_tanisiw';
+const bot = new Telegraf(process.env.BOT_TOKEN);
 
-const ADMIN_ID = 7470599966; 
-
-const searchSession = {}; 
-
-// 1. ANKETA SAHNASI (WIZARD)
-const registerWizard = new Scenes.WizardScene(
-  'REGISTER_SCENE',
-  
-  (ctx) => {
-    ctx.reply(
-      "✨ <b>Xosh keldińiz, ájayıp insan!</b> 💫\n\n" +
-      "📢 <i>Usı kanalǵa aǵza bolıwdı umıtpań:</i> <b>@ustyurt_tanisiw</b>\n\n" +
-      "Búgin táǵdir sizge jańa baxt, yaki kewilli sóhbetles alıp keler... Keliń, birge kóremiz 😉\n\n" +
-      "<i>Atıńız kim? (Yamasa ózińizge unaytuǵın sirli laqaptı jazıń)</i> ✍️", 
-      { 
-        parse_mode: 'HTML',
-        ...Markup.removeKeyboard() 
-      }
-    );
-    ctx.wizard.state.userData = {}; 
-    return ctx.wizard.next();
-  },
-  
-  (ctx) => {
-    ctx.wizard.state.userData.name = ctx.message.text;
-    ctx.reply("<b>Jasıńız neshede?</b> 🎂\n<i>(Tek san kirgiziń, mısalı: 20)</i>", { parse_mode: 'HTML' });
-    return ctx.wizard.next();
-  },
-  
-  (ctx) => {
-    const age = parseInt(ctx.message.text);
-    if (isNaN(age)) {
-      ctx.reply("❗️ <i>Iltimas, jasıńızdı tek sanlarda kirgiziń (máselen: 20).</i>", { parse_mode: 'HTML' });
-      return;
+bot.start((ctx) => {
+    if (ctx.chat.type === 'private') {
+        ctx.reply("Ассалому алайкум! Топшириқлар ботига уландингиз.\n\nЭнди гуруҳдаги муҳим вазифалар муддати тугашига 1 соат қолганда мен сизга шу ерда эслатма юбораман!");
+    } else {
+        ctx.reply("Ассалому алайкум! Топшириқлар ботига хуш келибсиз.");
     }
-    if (age < 16) {
-      ctx.reply("🚫 <b>Keshirersiz, bottan paydalanıw ushın jasıńız keminde 16 da bolıwı kerek.</b>", { parse_mode: 'HTML' });
-      return ctx.scene.leave();
+});
+
+async function isAdmin(ctx) {
+    if (ctx.chat.type === 'private') return false; 
+    try {
+        const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
+        return ['creator', 'administrator'].includes(member.status);
+    } catch (error) {
+        return false;
     }
+}
+
+bot.on('message', async (ctx) => {
     
-    ctx.wizard.state.userData.age = age;
-    ctx.reply("👤 <b>Jınısıńızdı tańlań:</b>", {
-      parse_mode: 'HTML',
-      ...Markup.keyboard([['Jigit 👨', 'Qız 👩']]).oneTime().resize()
-    });
-    return ctx.wizard.next();
-  },
-  
-  (ctx) => {
-    ctx.wizard.state.userData.gender = ctx.message.text;
-    ctx.reply("🎯 <b>Kimlerdi izlep atırsız?</b>", {
-      parse_mode: 'HTML',
-      ...Markup.keyboard([
-        ['Jigitlerdi 👨', 'Qızlardı 👩'],
-        ['Parqı joq 👫']
-      ]).oneTime().resize()
-    });
-    return ctx.wizard.next();
-  },
+    // ==========================================
+    // 1. БАЖАРИЛГАНЛИКНИ БЕЛГИЛАШ (+ ёки -)
+    // ==========================================
+    if (ctx.message.reply_to_message && ctx.message.text) {
+        const replyText = ctx.message.text.trim();
+        const taskId = `${ctx.chat.id}_${ctx.message.reply_to_message.message_id}`;
+        const db = readDB();
+        const task = db.tasks[taskId];
 
-  (ctx) => {
-    ctx.wizard.state.userData.lookingFor = ctx.message.text;
-    ctx.reply("📍 <b>Qaysı rayonnansız?</b>\n<i>Tómendegi dizimnen tańlań:</i> 👇", {
-      parse_mode: 'HTML',
-      ...Markup.keyboard([
-        ['Beruniy rayonı', 'Bozataw rayonı'],
-        ['Ellikqala rayonı', 'Kegeyli rayonı'],
-        ['Moynaq rayonı', 'Nókis rayonı'],
-        ['Qanlıkól rayonı', 'Qaraózek rayonı'],
-        ['Qońırat rayonı', 'Shımbay rayonı'],
-        ['Shomanay rayonı', 'Taqıyatas rayonı'],
-        ['Taxtakópir rayonı', 'Tórtkúl rayonı'],
-        ['Xojeli rayonı', 'Ámiwdárya rayonı']
-      ]).resize()
-    });
-    return ctx.wizard.next();
-  },
+        if (task) {
+            const isPlus = replyText.startsWith('+');
+            const isMinus = replyText.startsWith('-');
 
-  (ctx) => {
-    const validDistricts = ['Beruniy rayonı', 'Bozataw rayonı', 'Ellikqala rayonı', 'Kegeyli rayonı', 'Moynaq rayonı', 'Nókis rayonı', 'Qanlıkól rayonı', 'Qaraózek rayonı', 'Qońırat rayonı', 'Shımbay rayonı', 'Shomanay rayonı', 'Taqıyatas rayonı', 'Taxtakópir rayonı', 'Tórtkúl rayonı', 'Xojeli rayonı', 'Ámiwdárya rayonı'];
-    
-    if (!validDistricts.includes(ctx.message.text)) {
-      ctx.reply("⚠️ <i>Iltimas, rayondı qolda jazbań. Tómendegi arnawlı túymelerden paydalanıp tańlań.</i>", { parse_mode: 'HTML' });
-      return;
+            if (isPlus || isMinus) {
+                // Агар топшириқ аллақачон ёпилган бўлса ёки ёзган одам админ бўлмаса
+                const adminCheck = await isAdmin(ctx);
+                if (task.status === 'closed' || !adminCheck) {
+                    await ctx.deleteMessage().catch(() => {});
+                    if (task.status === 'closed') {
+                        const warn = await ctx.reply("❌ Бу топшириқ ёпилган, энди ўзгартириб бўлмайди!");
+                        setTimeout(() => ctx.telegram.deleteMessage(ctx.chat.id, warn.message_id).catch(() => {}), 3000);
+                    }
+                    return;
+                }
+
+                let targetUserId = null;
+
+                if (ctx.message.entities) {
+                    for (const ent of ctx.message.entities) {
+                        if (ent.type === 'text_mention') {
+                            targetUserId = ent.user.id.toString();
+                            break;
+                        } else if (ent.type === 'mention') {
+                            const mentionedUsername = replyText.substr(ent.offset + 1, ent.length - 1).toLowerCase();
+                            for (const uid in task.users) {
+                                if (task.users[uid].username && task.users[uid].username.toLowerCase() === mentionedUsername) {
+                                    targetUserId = uid;
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                if (!targetUserId) {
+                    const match = replyText.match(/^[\+-]\s*(\d+)$/);
+                    if (match) {
+                        const num = parseInt(match[1]);
+                        const userIds = Object.keys(task.users);
+                        if (num > 0 && num <= userIds.length) {
+                            targetUserId = userIds[num - 1];
+                        }
+                    }
+                }
+
+                if (targetUserId && task.users[targetUserId]) {
+                    task.users[targetUserId].status = isPlus ? 'bajarildi' : 'tanishdi';
+                    writeDB(db);
+
+                    let userList = "";
+                    let count = 1;
+                    for (const uid in task.users) {
+                        const u = task.users[uid];
+                        const icon = u.status === 'bajarildi' ? '✅' : '🔴';
+                        const statusText = u.status === 'bajarildi' ? 'Бажарди' : 'Танишди';
+                        userList += `${count}. ${icon} ${u.name} (${statusText})\n`;
+                        count++;
+                    }
+
+                    const newText = `📋 <b>ЯНГИ ВАЗИФА!</b>\n👤 <b>Топшириқ берувчи:</b> ${task.adminMention}\n\n📝 <b>Вазифа:</b> ${task.text}\n\n<b>Топшириқ ҳолати:</b>\n${userList}`;
+
+                    const editOptions = {
+                        parse_mode: 'HTML',
+                        reply_markup: ctx.message.reply_to_message.reply_markup 
+                    };
+
+                    try {
+                        if (task.hasMedia) {
+                            await ctx.telegram.editMessageCaption(ctx.chat.id, ctx.message.reply_to_message.message_id, undefined, newText, editOptions);
+                        } else {
+                            await ctx.telegram.editMessageText(ctx.chat.id, ctx.message.reply_to_message.message_id, undefined, newText, editOptions);
+                        }
+                    } catch (err) {}
+                }
+                
+                await ctx.deleteMessage().catch(() => {});
+                return; 
+            }
+        }
     }
 
-    ctx.wizard.state.userData.district = ctx.message.text;
-    ctx.reply("💖 <b>Ózińiz haqqında qısqasha, júrekten shıqqan jılı sózlerden jazıń</b>\n\n<i>Mısalı: Taqıyatas rayonınanman, kewildi súhbetlerdi hám sammitlerde sayr etiwdi unataman ✨</i>\n\nEger qálemeseńiz, 'Ótkeriw ⏭' túymesin basıń.", {
-      parse_mode: 'HTML',
-      ...Markup.keyboard(['Ótkeriw ⏭']).oneTime().resize()
-    });
-    return ctx.wizard.next();
-  },
-
-  (ctx) => {
-    ctx.wizard.state.userData.bio = ctx.message.text === 'Ótkeriw ⏭' ? '' : ctx.message.text;
-    ctx.reply("📸 <b>Kóz alıp bolmas eń sulıw, jarqıraǵan súwretińizdi jiberiń</b> ✨", { 
-      parse_mode: 'HTML',
-      ...Markup.removeKeyboard() 
-    });
-    return ctx.wizard.next();
-  },
-
-  async (ctx) => {
-    if (!ctx.message.photo) {
-      ctx.reply("😅 <i>Bul súwretke uqsamaydı, dosım. Iltimas, chiroyli súwret jiberiń!</i>", { parse_mode: 'HTML' });
-      return;
-    }
+    // ==========================================
+    // 2. ЯНГИ ТОПШИРИҚ БЕРИШ (/topshiriq)
+    // ==========================================
+    let text = ctx.message.text || ctx.message.caption || '';
+    let isCommand = text.toLowerCase().startsWith('/topshiriq') || text.toLowerCase().startsWith('/vazifa');
     
-    const photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+    if (!isCommand && !text && ctx.message.reply_to_message) {
+        let replyText = ctx.message.reply_to_message.text || ctx.message.reply_to_message.caption || '';
+        if (replyText.toLowerCase().startsWith('/topshiriq') || replyText.toLowerCase().startsWith('/vazifa')) {
+            isCommand = true;
+            text = replyText;
+        }
+    }
+
+    if (isCommand) {
+        if (ctx.chat.type === 'private') return ctx.reply("Бу команда фақат гуруҳларда ишлайди.");
+        
+        const adminCheck = await isAdmin(ctx);
+        if (!adminCheck) {
+            await ctx.deleteMessage().catch(() => {});
+            return ctx.reply("Кечирасиз, вазифани фақат гуруҳ админлари бера олади.");
+        }
+
+        text = text.replace(/^\/(topshiriq|vazifa)/i, '').trim();
+
+        let hasMedia = false;
+        let targetMessageId = ctx.message.message_id;
+
+        if (ctx.message.reply_to_message) {
+            targetMessageId = ctx.message.reply_to_message.message_id;
+            const repMsg = ctx.message.reply_to_message;
+            if (repMsg.photo || repMsg.document || repMsg.video || repMsg.audio || repMsg.voice) {
+                hasMedia = true;
+            }
+            if (!text) {
+                text = repMsg.text || repMsg.caption || "Бириктирилган хабар/файл бўйича топшириқ.";
+            }
+        } else {
+            if (ctx.message.photo || ctx.message.document || ctx.message.video || ctx.message.audio || ctx.message.voice) {
+                hasMedia = true;
+            }
+        }
+
+        if (!text) return ctx.reply("Илтимос, вазифа матнини ҳам киритинг ёки файл тагига изоҳ ёзиб юборинг.");
+
+        const safeAdminName = ctx.from.first_name.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const adminMention = `<a href="tg://user?id=${ctx.from.id}">${safeAdminName}</a>`;
+        const safeText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+        // --- ВАҚТНИ АЖРАТИБ ОЛИШ (Муддат: 18:00) ---
+        const timeMatch = text.match(/(?:muddat|муддат)\s*[:\-]?\s*(\d{1,2})[:\.](\d{2})/i);
+        let deadlineTimestamp = null;
+        let deadlineString = null;
+
+        if (timeMatch) {
+            const hours = parseInt(timeMatch[1]);
+            const minutes = parseInt(timeMatch[2]);
+            const now = new Date();
+            const deadlineDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
+            
+            if (deadlineDate.getTime() < now.getTime()) {
+                deadlineDate.setDate(deadlineDate.getDate() + 1);
+            }
+            
+            deadlineTimestamp = deadlineDate.getTime();
+            deadlineString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+        }
+
+        const messageContent = `📋 <b>ЯНГИ ВАЗИФА!</b>\n👤 <b>Топшириқ берувчи:</b> ${adminMention}\n\n📝 <b>Вазифа:</b> ${safeText}\n\n<b>Топшириқ ҳолати:</b>\nҲали ҳеч ким танишмади.`;
+
+        let sentMsg;
+        const extraOptions = {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "👁 Танишдим", callback_data: "tanishdim" }],
+                    [{ text: "🔒 Топшириқни ёпиш", callback_data: "yopish" }]
+                ]
+            }
+        };
+
+        if (hasMedia) {
+            extraOptions.caption = messageContent;
+            sentMsg = await ctx.telegram.copyMessage(ctx.chat.id, ctx.chat.id, targetMessageId, extraOptions);
+        } else {
+            sentMsg = await ctx.reply(messageContent, extraOptions);
+        }
+
+        const db = readDB();
+        const taskId = `${ctx.chat.id}_${sentMsg.message_id}`;
+        db.tasks[taskId] = {
+            adminId: ctx.from.id,
+            adminMention: adminMention,
+            text: safeText,
+            status: 'open',
+            hasMedia: hasMedia,
+            deadline: deadlineTimestamp,
+            deadlineString: deadlineString,
+            reminderSent: false,
+            users: {} 
+        };
+        writeDB(db);
+
+        await ctx.deleteMessage().catch(() => {});
+        if (ctx.message.reply_to_message) {
+            await ctx.telegram.deleteMessage(ctx.chat.id, ctx.message.reply_to_message.message_id).catch(() => {});
+        }
+    }
+});
+
+bot.action('tanishdim', async (ctx) => {
+    const taskId = `${ctx.chat.id}_${ctx.callbackQuery.message.message_id}`;
+    const db = readDB();
+    const task = db.tasks[taskId];
+
+    if (!task) return ctx.answerCbQuery("Бу топшириқ базада топилмади.", { show_alert: true });
+    if (task.status === 'closed') return ctx.answerCbQuery("Бу топшириқ ёпилган!", { show_alert: true });
+
     const userId = ctx.from.id;
-    
-    ctx.wizard.state.userData.photoId = photoId;
-    ctx.wizard.state.userData.userId = userId;
-    ctx.wizard.state.userData.username = ctx.from.username || null;
-    
-    await set(ref(db, 'users/' + userId), ctx.wizard.state.userData);
+    const safeUserName = ctx.from.first_name.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-    const user = ctx.wizard.state.userData;
-    const caption = `💎 <b>ANKETA TAYAR!</b>\n\n• Atı: <b>${user.name}</b>\n• Jası: <code>${user.age} jas</code>\n• Aymaǵı: 📍 <b>${user.district}</b>\n\n💬 <i>“${user.bio}”</i>\n\n🔥 <i>Kóz tiymasin, júdá kórkem kórinip turibsiz!</i>`;
-    
-    await ctx.reply("🎉 <b>Tabrikleymiz! Anketańız jarqırap turibdi:</b>", { parse_mode: 'HTML' });
-    await ctx.replyWithPhoto(photoId, { caption: caption, parse_mode: 'HTML' });
-    
-    await ctx.reply("📱 <b>Bas menyu. Kimge ǵayupdan ǵashiq bolamız? 😉</b>", {
-      parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([
-        [Markup.button.url('📢 Bizdiń kanal: @ustyurt_tanisiw', CHANNEL_LINK)]
-      ]),
-      ...Markup.keyboard([
-        ['🚀 Izlewdi baslaw'],
-        ['👤 Meniń anketam', '⚙️ Sazlamalar']
-      ]).resize()
-    });
+    if (task.users[userId]) return ctx.answerCbQuery("Сиз аллақачон танишгансиз!", { show_alert: true });
 
-    return ctx.scene.leave();
-  }
-);
+    task.users[userId] = { 
+        name: safeUserName, 
+        username: ctx.from.username || null,
+        status: 'tanishdi' 
+    };
+    writeDB(db);
 
-const stage = new Scenes.Stage([registerWizard]);
-bot.use(session());
-bot.use(stage.middleware());
-
-bot.start(async (ctx) => {
-  await ctx.scene.leave(); 
-  const userId = ctx.from.id;
-  const snapshot = await get(ref(db, 'users/' + userId));
-  
-  if (snapshot.exists()) {
-    return ctx.reply(
-      "✨ <b>Siz allaqachon ro'yxatdan o'tgansiz!</b>\n\n📢 <i>Kanalimizga qo'shiling:</i> <b>@ustyurt_tanisiw</b>\n\nQani, yuraklarni zabt etishni boshlaymizmi? 😉", 
-      {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([
-          [Markup.button.url('📢 Kanal: @ustyurt_tanisiw', CHANNEL_LINK)]
-        ]),
-        ...Markup.keyboard([
-          ['🚀 Izlewdi baslaw'],
-          ['👤 Meniń anketam', '⚙️ Sazlamalar']
-        ]).resize()
-      }
-    );
-  }
-  ctx.scene.enter('REGISTER_SCENE');
-});
-
-const resetAccount = async (ctx) => {
-  await ctx.scene.leave(); 
-  const userId = ctx.from.id;
-  await remove(ref(db, 'users/' + userId));
-  await remove(ref(db, 'likes/' + userId));
-  await remove(ref(db, 'viewLimits/' + userId));
-  delete searchSession[userId];
-  
-  ctx.reply("🗑 <b>Diqqat! Sizning eski anketangiz bazadan butunlay o'chirildi.</b>\n\nYangi anketa yaratish uchun /start buyrug'ini bosing ✨", {
-    parse_mode: 'HTML',
-    ...Markup.removeKeyboard()
-  });
-};
-
-bot.command('reset', (ctx) => {
-  resetAccount(ctx);
-});
-
-// ADMIN PANEL STATISTIKA
-bot.command('admin', async (ctx) => {
-  await ctx.scene.leave(); 
-  const userId = ctx.from.id;
-  
-  if (userId !== ADMIN_ID) {
-    return ctx.reply("❌ Bu buyruq faqat bot admini uchun!");
-  }
-
-  const snapshot = await get(ref(db, 'users'));
-  if (!snapshot.exists()) {
-    return ctx.reply("📊 Hozircha bazada foydalanuvchilar yo'q.");
-  }
-
-  const usersObj = snapshot.val();
-  const usersArray = Object.values(usersObj);
-  let totalUsers = usersArray.length;
-
-  let message = `📊 <b>ADMIN PANEL: STATISTIKA</b>\n\n`;
-  message += `👥 Jami ro'yxatdan o'tganlar: <b>${totalUsers} ta</b>\n\n`;
-  message += `<b>Oxirgi ro'yxatdan o'tganlar:</b>\n`;
-
-  const recentUsers = usersArray.slice(-10).reverse();
-  recentUsers.forEach((u, index) => {
-    const usernameLink = u.username ? `@${u.username}` : `ID: ${u.userId}`;
-    message += `${index + 1}. <b>${u.name}</b> (${u.age} jas, ${u.district}) — ${usernameLink}\n`;
-  });
-
-  ctx.reply(message, { parse_mode: 'HTML' });
-});
-
-// 📢 HAMMAGA XABAR YUBORISH (BROADCAST)
-bot.command('habar', async (ctx) => {
-  await ctx.scene.leave();
-  const userId = ctx.from.id;
-
-  if (userId !== ADMIN_ID) {
-    return ctx.reply("❌ Bu buyruq faqat bot admini uchun!");
-  }
-
-  // /habar so'zidan keyingi matnni ajratib olamiz
-  const textMessage = ctx.message.text.replace('/habar', '').trim();
-
-  if (!textMessage) {
-    return ctx.reply("⚠️ <b>Xato!</b> Xabar yuborish uchun /habar buyrug'idan keyin matn yozing.\n<i>Mısalı: /habar Barchaga salom!</i>", { parse_mode: 'HTML' });
-  }
-
-  const snapshot = await get(ref(db, 'users'));
-  if (!snapshot.exists()) {
-    return ctx.reply("📊 Bazada foydalanuvchilar topilmadi.");
-  }
-
-  const usersObj = snapshot.val();
-  const userIds = Object.keys(usersObj);
-
-  let successCount = 0;
-  let failCount = 0;
-
-  ctx.reply(`⏳ Xabar tarqatish boshlandi... Jami foydalanuvchilar: ${userIds.length} ta`);
-
-  for (const id of userIds) {
-    try {
-      await bot.telegram.sendMessage(id, `📢 <b>XABARNOMA:</b>\n\n${textMessage}`, { parse_mode: 'HTML' });
-      successCount++;
-    } catch (e) {
-      failCount++; // Agar foydalanuvchi botni bloklagan bo'lsa xatoga tushadi
-    }
-  }
-
-  ctx.reply(`✅ <b>Xabar tarqatish yakunlandi!</b>\n\n• Muvaffaqiyatli yuborildi: <b>${successCount} ta</b>\n• Yuborilmadi (bloklaganlar): <b>${failCount} ta</b>`, { parse_mode: 'HTML' });
-});
-
-bot.hears('⚙️ Sazlamalar', (ctx) => {
-  ctx.reply("⚙️ <b>Sazlamalar bólimi:</b>\n\n📢 <i>Kanalimiz:</i> <b>@ustyurt_tanisiw</b>", {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [Markup.button.url('📢 Kanalga o\'tish', CHANNEL_LINK)]
-    ]),
-    ...Markup.keyboard([
-      ['🔄 Anketanı óshirip, qayta baslaw'],
-      ['🔙 Bas menyuǵa qaytıw']
-    ]).resize()
-  });
-});
-
-bot.hears('🔄 Anketanı óshirip, qayta baslaw', (ctx) => {
-  ctx.reply("⚠️ <b>Haqiqatan ham anketangizni o'chirmoqchimisiz?</b>\n\nBu amal eski anketangizni bazadan butunlay o'chirib yuboradi va sizni qaytadan ro'yxatdan o'tkazadi.", {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('✅ Ha, o\'chirish va qayta boshlash', 'confirm_reset')],
-      [Markup.button.callback('❌ Bekor qilish', 'cancel_reset')]
-    ])
-  });
-});
-
-bot.action('confirm_reset', async (ctx) => {
-  await ctx.answerCbQuery("Anketangiz o'chirildi!");
-  await ctx.editMessageReplyMarkup();
-  resetAccount(ctx);
-});
-
-bot.action('cancel_reset', async (ctx) => {
-  await ctx.answerCbQuery("Bekor qilindi ❌");
-  await ctx.editMessageReplyMarkup();
-  ctx.reply("📱 <b>Bas menyu:</b>", {
-    parse_mode: 'HTML',
-    ...Markup.keyboard([
-      ['🚀 Izlewdi baslaw'],
-      ['👤 Meniń anketam', '⚙️ Sazlamalar']
-    ]).resize()
-  });
-});
-
-bot.hears('🔙 Bas menyuǵa qaytıw', (ctx) => {
-  ctx.reply("📱 <b>Bas menyu:</b>", {
-    parse_mode: 'HTML',
-    ...Markup.keyboard([
-      ['🚀 Izlewdi baslaw'],
-      ['👤 Meniń anketam', '⚙️ Sazlamalar']
-    ]).resize()
-  });
-});
-
-bot.hears('👤 Meniń anketam', async (ctx) => {
-  const userId = ctx.from.id;
-  const snapshot = await get(ref(db, 'users/' + userId));
-  
-  if (!snapshot.exists()) {
-    return ctx.reply("❌ Siz ele anketa toltirmagansiz. /start ni basıp baslań!");
-  }
-  
-  const user = snapshot.val();
-  const caption = `🌟 <b>Meniń anketam:</b>\n\n• Atı: <b>${user.name}</b>\n• Jası: <code>${user.age} jas</code>\n• Aymaǵı: 📍 <b>${user.district}</b>\n\n💬 <i>“${user.bio}”</i>`;
-  ctx.replyWithPhoto(user.photoId, { caption: caption, parse_mode: 'HTML' });
-});
-
-// 5 TA ANKETA LIMITI VA QIDIRUV
-bot.hears('🚀 Izlewdi baslaw', async (ctx) => {
-  const userId = ctx.from.id;
-  const userSnapshot = await get(ref(db, 'users/' + userId));
-
-  if (!userSnapshot.exists()) {
-    return ctx.reply("❌ Oldin óz anketańızdı toltırıwıńız kerek! /start ni basıń.");
-  }
-
-  const currentUser = userSnapshot.val();
-
-  const limitSnap = await get(ref(db, 'viewLimits/' + userId));
-  let currentLimit = limitSnap.exists() ? limitSnap.val() : 0;
-
-  if (currentLimit >= 5) {
-    return ctx.reply("🛑 <b>Siz 5 ta anketani ko'rib chiqdingiz!</b>\n\nYangi anketalarni ko'rishni davom ettirish uchun kanalimizga obuna bo'ling 👇", {
-      parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([
-        [Markup.button.url('📢 Kanalǵa aǵza bolıw (@ustyurt_tanisiw)', CHANNEL_LINK)],
-        [Markup.button.callback('✅ Davom etish', 'reset_limit')]
-      ])
-    });
-  }
-
-  const allUsersSnap = await get(ref(db, 'users'));
-  if (!allUsersSnap.exists()) {
-    return ctx.reply("😔 <b>Házirshe bazada basqa adamlar joq.</b> ✨", { parse_mode: 'HTML' });
-  }
-
-  const allUsersObj = allUsersSnap.val();
-  let candidates = Object.values(allUsersObj).filter(u => u.userId !== userId);
-
-  candidates = candidates.filter(target => {
-    const myLooking = currentUser.lookingFor; 
-    const targetGender = target.gender;       
-    const targetLooking = target.lookingFor;  
-    const myGender = currentUser.gender;      
-
-    let isMatch = false;
-
-    if (myLooking.includes('Jigitlerdi') && targetGender.includes('Jigit')) {
-      isMatch = true;
-    } else if (myLooking.includes('Qızlardı') && targetGender.includes('Qız')) {
-      isMatch = true;
-    } else if (myLooking.includes('Parqı joq')) {
-      isMatch = true;
+    let userList = "";
+    let count = 1;
+    for (const uid in task.users) {
+        const u = task.users[uid];
+        const icon = u.status === 'bajarildi' ? '✅' : '🔴';
+        const statusText = u.status === 'bajarildi' ? 'Бажарди' : 'Танишди';
+        userList += `${count}. ${icon} ${u.name} (${statusText})\n`;
+        count++;
     }
 
-    let reverseMatch = false;
-    if (targetLooking.includes('Jigitlerdi') && myGender.includes('Jigit')) {
-      reverseMatch = true;
-    } else if (targetLooking.includes('Qızlardı') && myGender.includes('Qız')) {
-      reverseMatch = true;
-    } else if (targetLooking.includes('Parqı joq')) {
-      reverseMatch = true;
-    }
-
-    return isMatch && reverseMatch;
-  });
-
-  if (candidates.length === 0) {
-    return ctx.reply("😔 <b>Házirshe sizge más jup tabılmadı.</b> ✨", { parse_mode: 'HTML' });
-  }
-
-  candidates.sort((a, b) => {
-    return Math.abs(a.age - currentUser.age) - Math.abs(b.age - currentUser.age);
-  });
-
-  if (!searchSession[userId]) {
-    searchSession[userId] = 0;
-  }
-
-  let index = searchSession[userId];
-  if (index >= candidates.length) {
-    searchSession[userId] = 0;
-    index = 0;
-  }
-
-  const target = candidates[index];
-  searchSession[userId]++;
-  
-  await set(ref(db, 'viewLimits/' + userId), currentLimit + 1);
-
-  const flirtPhrases = [
-    "💘 <i>Bunday sulıwlıqtı kórip, tilińiz baylanıp qalmawı múmkin... 😉</i>",
-    "🔥 <i>Kózlerińiz ushırasqan ketti ba? Sezimler alday almaydı... ✨</i>",
-    "🌹 <i>Bálkim, taǵdirdiń eń ájayıp sawǵası usı insandır?</i>",
-    "💫 <i>Onıń bir jyljayǵanı júregingizni teletiwine jetip asadı... ❤️</i>",
-    "⚡️ <i>Házir júreginiz 'tup-tup' urıp ketkenin sezip turman! 🤫</i>"
-  ];
-  const randomFlirt = flirtPhrases[Math.floor(Math.random() * flirtPhrases.length)];
-
-  const caption = `🎯 <b>SIZGE ATALǴAN JUP:</b>\n\n• Atı: <b>${target.name}</b>\n• Jası: <code>${target.age} jas</code>\n• Aymaǵı: 📍 <b>${target.district}</b>\n\n💬 <i>“${target.bio}”</i>\n\n${randomFlirt}`;
-
-  await ctx.replyWithPhoto(target.photoId, {
-    caption: caption,
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [
-        Markup.button.callback('❤️ Unadı (Like)', `like_${target.userId}`),
-        Markup.button.callback('👎 Ótkeriw', `skip_${target.userId}`)
-      ],
-      [Markup.button.callback('💤 Qıdırıwdı toqtatıw', 'stop_search')]
-    ])
-  });
-});
-
-bot.action('reset_limit', async (ctx) => {
-  const userId = ctx.from.id;
-  await set(ref(db, 'viewLimits/' + userId), 0);
-  await ctx.answerCbQuery("Rahmat! Davom etamiz ✅");
-  await ctx.editMessageText("✅ <b>Tabriklaymiz! Davom etishingiz mumkin:</b>", { parse_mode: 'HTML' });
-  ctx.reply("📱 <b>Bas menyu:</b>", {
-    parse_mode: 'HTML',
-    ...Markup.keyboard([
-      ['🚀 Izlewdi baslaw'],
-      ['👤 Meniń anketam', '⚙️ Sazlamalar']
-    ]).resize()
-  });
-});
-
-// LIKE VA MATCH TIZIMI
-bot.action(/^like_(.+)$/, async (ctx) => {
-  const targetId = Number(ctx.match[1]); 
-  const userId = ctx.from.id;            
-  
-  await ctx.answerCbQuery("❤️ Seziminigiz jiberildi! 💌");
-  await ctx.editMessageReplyMarkup();
-  
-  const targetLikesRef = ref(db, 'likes/' + targetId);
-  const targetLikesSnap = await get(targetLikesRef);
-  let targetLikes = targetLikesSnap.exists() ? targetLikesSnap.val() : [];
-  
-  if (!targetLikes.includes(userId)) {
-    targetLikes.push(userId);
-    await set(targetLikesRef, targetLikes);
-  }
-
-  const myLikesSnap = await get(ref(db, 'likes/' + userId));
-  const myLikes = myLikesSnap.exists() ? myLikesSnap.val() : [];
-  const targetLikesMe = myLikes.includes(targetId);
-
-  const senderSnap = await get(ref(db, 'users/' + userId));
-  const targetSnap = await get(ref(db, 'users/' + targetId));
-  
-  const sender = senderSnap.val();
-  const target = targetSnap.val();
-
-  if (targetLikesMe) {
-    const senderContact = sender.username ? `@${sender.username}` : `tg://user?id=${userId}`;
-    const targetContact = target.username ? `@${target.username}` : `tg://user?id=${targetId}`;
-
-    await ctx.reply(`🎉 <b>SEZIMLERÍNIZ ÓZ-ARA KELISTI (MATCH)! 💖🔥</b>\n\nEndi erkin sóylesiwińiz múmkin: ${targetContact}`, { parse_mode: 'HTML' });
+    const newText = `📋 <b>ЯНГИ ВАЗИФА!</b>\n👤 <b>Топшириқ берувчи:</b> ${task.adminMention}\n\n📝 <b>Вазифа:</b> ${task.text}\n\n<b>Топшириқ ҳолати:</b>\n${userList}`;
 
     try {
-      await bot.telegram.sendMessage(targetId, `🎉 <b>SEZIMLERÍNIZ ÓZ-ARA KELISTI (MATCH)! 💖🔥</b>\n\n${sender.name} menen baylanısqa shıǵıń: ${senderContact}`, { parse_mode: 'HTML' });
-    } catch (e) {
-      console.log("Xabar yuborib bo'lmadi");
+        const editOptions = {
+            parse_mode: 'HTML',
+            reply_markup: ctx.callbackQuery.message.reply_markup 
+        };
+        if (task.hasMedia) {
+            await ctx.editMessageCaption(newText, editOptions);
+        } else {
+            await ctx.editMessageText(newText, editOptions);
+        }
+        ctx.answerCbQuery("Топшириқ билан танишганингиз белгиланди ✅");
+    } catch (err) {
+        ctx.answerCbQuery("Хатолик юз берди.");
     }
+});
 
-  } else {
+bot.action('yopish', async (ctx) => {
+    const taskId = `${ctx.chat.id}_${ctx.callbackQuery.message.message_id}`;
+    const db = readDB();
+    const task = db.tasks[taskId];
+
+    if (!task) return ctx.answerCbQuery("Топшириқ топилмади.", { show_alert: true });
+    if (ctx.from.id !== task.adminId) return ctx.answerCbQuery("Топшириқни фақат уни берган админ ёпа олади!", { show_alert: true });
+
+    task.status = 'closed';
+    writeDB(db);
+
+    let userList = "";
+    let count = 1;
+    for (const uid in task.users) {
+        const u = task.users[uid];
+        const icon = u.status === 'bajarildi' ? '✅' : '🔴';
+        const statusText = u.status === 'bajarildi' ? 'Бажарди' : 'Танишди';
+        userList += `${count}. ${icon} ${u.name} (${statusText})\n`;
+        count++;
+    }
+    if(Object.keys(task.users).length === 0) userList = "Ҳеч ким танишмади.";
+
+    const newText = `🔒 <b>БУ ТОПШИРИҚ ЁПИЛГАН</b>\n👤 <b>Топшириқ берувчи:</b> ${task.adminMention}\n\n📝 <b>Вазифа:</b> ${task.text}\n\n<b>Якуний ҳолат:</b>\n${userList}`;
+
     try {
-      await bot.telegram.sendMessage(targetId, `🔥 <b>Hey! Sizge kimgedur qattı unapsız... 😉</b>\n\nMine onıń kórkem anketası:`, { parse_mode: 'HTML' });
-      await bot.telegram.sendPhoto(targetId, sender.photoId, {
-        caption: `• Atı: <b>${sender.name}</b>\n• Jası: <code>${sender.age} jas</code>\n• Aymaǵı: 📍 <b>${sender.district}</b>\n\n💬 <i>“${sender.bio}”</i>`,
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('❤️ Sizge de unadımı?', `like_${userId}`)]
-        ])
-      });
-    } catch (e) {
-      console.log("Xabar yuborib bo'lmadi");
+        const editOptions = {
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [] } 
+        };
+        if (task.hasMedia) {
+            await ctx.editMessageCaption(newText, editOptions);
+        } else {
+            await ctx.editMessageText(newText, editOptions);
+        }
+        ctx.answerCbQuery("Топшириқ ёпилди.");
+    } catch (err) {
+        ctx.answerCbQuery("Хатолик юз берди.");
     }
-  }
-
-  ctx.reply("✨ Ajoyib tańlaw! Keyingi júrekdi tabamız ba? 😉", Markup.keyboard([
-    ['🚀 Izlewdi baslaw'],
-    ['👤 Meniń anketam', '⚙️ Sazlamalar']
-  ]).resize());
 });
 
-bot.action(/^skip_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery("Ótkerip jiberildi ⏭");
-  await ctx.editMessageReplyMarkup();
-  return ctx.reply("Keyingi anketani tabıw ushın tómendegi túymeni basıń:", Markup.keyboard([
-    ['🚀 Izlewdi baslaw']
-  ]).resize());
-});
+// ==========================================
+// 3. АВТОМАТИК ЕСЛАТМА ТАЙМЕРИ
+// ==========================================
+setInterval(() => {
+    const db = readDB();
+    let dbChanged = false;
+    const now = Date.now();
+    const ONE_HOUR = 60 * 60 * 1000;
 
-bot.action('stop_search', async (ctx) => {
-  await ctx.answerCbQuery("Qıdırıwdı toqtatıldı 💤");
-  await ctx.editMessageReplyMarkup();
-  ctx.reply("📱 <b>Bas menyu:</b>", {
-    parse_mode: 'HTML',
-    ...Markup.keyboard([
-      ['🚀 Izlewdi baslaw'],
-      ['👤 Meniń anketam', '⚙️ Sazlamalar']
-    ]).resize()
-  });
-});
+    for (const taskId in db.tasks) {
+        const task = db.tasks[taskId];
+        
+        if (task.status === 'open' && task.deadline && !task.reminderSent) {
+            if (task.deadline - now <= ONE_HOUR && task.deadline > now) {
+                task.reminderSent = true;
+                dbChanged = true;
 
-bot.launch();
-console.log('Bot muvaffaqiyatli ishga tushdi...');
+                for (const uid in task.users) {
+                    if (task.users[uid].status === 'tanishdi') {
+                        const msg = `⚠️ <b>ЭСЛАТМА!</b>\n\nСизда бажарилмаган вазифа бор. Муддат тугашига <b>1 соат</b> қолди!\n\n📝 <b>Вазифа:</b> ${task.text}\n⏱ <b>Муддат:</b> ${task.deadlineString}`;
+                        
+                        bot.telegram.sendMessage(uid, msg, { parse_mode: 'HTML' }).catch(() => {});
+                    }
+                }
+            }
+        }
+    }
+    
+    if (dbChanged) writeDB(db);
+}, 60000);
+
+bot.launch().then(() => {
+    console.log("Bot muvaffaqiyatli ishga tushdi...");
+});
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
