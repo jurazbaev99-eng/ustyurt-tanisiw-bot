@@ -122,8 +122,14 @@
       "hasMedia": true,
       "deadline": 1789831380000,
       "deadlineString": "20:23",
-      "reminderSent": false,
-      "users": {}
+      "reminderSent": true,
+      "users": {
+        "5560972524": {
+          "name": "shagzad",
+          "username": null,
+          "status": "tanishdi"
+        }
+      }
     }
   }
 }

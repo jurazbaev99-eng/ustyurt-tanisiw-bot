@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
+const { OpenAI } = require('openai'); // 1. OpenAI kutubxonasi qo'shildi
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
@@ -32,6 +33,11 @@ const writeDB = (data) => {
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
+// 2. OpenAI API kalitini ulash
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+});
+
 bot.start((ctx) => {
     if (ctx.chat.type === 'private') {
         ctx.reply("Ассалому алайкум! Топшириқлар ботига уландингиз.\n\nЭнди гуруҳдаги муҳим вазифалар муддати тугашига 1 соат қолганда мен сизга шу ерда эслатма юбораман!");
@@ -50,6 +56,34 @@ async function isAdmin(ctx) {
     }
 }
 
+// ==========================================
+// 4. CHATGPT BILAN SUHBAT (/chat) - YANGI QO'SHILGAN QISM
+// ==========================================
+bot.command('chat', async (ctx) => {
+    const userText = ctx.message.text.replace('/chat', '').trim();
+    
+    if (!userText) {
+        return ctx.reply("Илтимос, /chat буйруғидан сўнг саволингизни ёзинг.\nМисол: /chat менга ариза матни тайёрлаб бер.");
+    }
+
+    const waitMsg = await ctx.reply("⏳ Ўйламоқдаман...");
+
+    try {
+        const completion = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo", 
+            messages: [{ role: "user", content: userText }],
+        });
+
+        const replyText = completion.choices[0].message.content;
+
+        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, null, replyText);
+        
+    } catch (error) {
+        console.error("OpenAI xatosi:", error);
+        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, null, "Кечирасиз, ChatGPT билан уланишда хатолик юз берди 😔");
+    }
+});
+
 bot.on('message', async (ctx) => {
     
     // ==========================================
@@ -66,7 +100,6 @@ bot.on('message', async (ctx) => {
             const isMinus = replyText.startsWith('-');
 
             if (isPlus || isMinus) {
-                // Агар топшириқ аллақачон ёпилган бўлса ёки ёзган одам админ бўлмаса
                 const adminCheck = await isAdmin(ctx);
                 if (task.status === 'closed' || !adminCheck) {
                     await ctx.deleteMessage().catch(() => {});
@@ -193,8 +226,8 @@ bot.on('message', async (ctx) => {
         const adminMention = `<a href="tg://user?id=${ctx.from.id}">${safeAdminName}</a>`;
         const safeText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-        // --- ВАҚТНИ АЖРАТИБ ОЛИШ (Муддат: 18:00) ---
-        const timeMatch = text.match(/(?:muddat|муддат)\s*[:\-]?\s*(\d{1,2})[:\.](\d{2})/i);
+        // --- ВАҚТНИ АЖРАТИБ ОЛИШ (Тошкент вақти ва хоҳланган формат учун созланган) ---
+        const timeMatch = text.match(/(?:(?:muddat|муддат)\s*[:\-]?\s*)?(\d{1,2})[:\.](\d{2})/i);
         let deadlineTimestamp = null;
         let deadlineString = null;
 
@@ -202,9 +235,12 @@ bot.on('message', async (ctx) => {
             const hours = parseInt(timeMatch[1]);
             const minutes = parseInt(timeMatch[2]);
             const now = new Date();
-            const deadlineDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
             
-            if (deadlineDate.getTime() < now.getTime()) {
+            // Server Frankfurt (UTC) da ishlagani uchun Toshkent vaqtini (+5 soat) to'g'ri hisoblaymiz
+            const deadlineDate = new Date();
+            deadlineDate.setUTCHours(hours - 5, minutes, 0, 0);
+            
+            if (deadlineDate.getTime() <= now.getTime()) {
                 deadlineDate.setDate(deadlineDate.getDate() + 1);
             }
             
@@ -343,7 +379,7 @@ bot.action('yopish', async (ctx) => {
 });
 
 // ==========================================
-// 3. АВТОМАТИК ЕСЛАТМА ТАЙМЕРИ
+// 3. АВТОМАТИК ЕСЛАТМА ТАЙМЕРИ (Кучайтирилган)
 // ==========================================
 setInterval(() => {
     const db = readDB();
@@ -355,7 +391,9 @@ setInterval(() => {
         const task = db.tasks[taskId];
         
         if (task.status === 'open' && task.deadline && !task.reminderSent) {
-            if (task.deadline - now <= ONE_HOUR && task.deadline > now) {
+            const timeLeft = task.deadline - now;
+            
+            if (timeLeft <= ONE_HOUR && timeLeft > 0) {
                 task.reminderSent = true;
                 dbChanged = true;
 
@@ -371,7 +409,7 @@ setInterval(() => {
     }
     
     if (dbChanged) writeDB(db);
-}, 60000);
+}, 30000);
 
 bot.launch().then(() => {
     console.log("Bot muvaffaqiyatli ishga tushdi...");
