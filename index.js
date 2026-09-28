@@ -71,12 +71,12 @@ async function isAdmin(ctx) {
     }
 }
 
-// Статус матнини генерация қилиш
+// Статус матнини генерация қилиш (3 хил статус)
 function generateUserList(taskUsers) {
     let userList = "";
     let count = 1;
-    for (const uid in taskUsers) {
-        const u = taskUsers[uid];
+    for (const key in taskUsers) {
+        const u = taskUsers[key];
         let icon = '🔴';
         let statusText = 'Танишмади';
 
@@ -135,7 +135,6 @@ bot.on('message', async (ctx) => {
                 const authorId = ctx.message.reply_to_message.from.id.toString();
                 const authorUsername = ctx.message.reply_to_message.from.username ? ctx.message.reply_to_message.from.username.toLowerCase() : null;
 
-                // Кимга жавоб берилганини аниқлаш
                 for (const key in task.users) {
                     const u = task.users[key];
                     if (key === authorId || (authorUsername && u.username && u.username.toLowerCase() === authorUsername)) {
@@ -144,7 +143,6 @@ bot.on('message', async (ctx) => {
                     }
                 }
 
-                // Агар рўйхатдан рақам орқали топса (масалан: + 3)
                 if (!targetKey) {
                     const match = replyText.match(/^[\+-]\s*(\d+)$/);
                     if (match) {
@@ -262,7 +260,6 @@ bot.on('message', async (ctx) => {
             deadlineString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
         }
 
-        // Фойдаланувчиларни username асосида уникал ключ билан сақлаймиз
         let taskUsers = {};
         DEFAULT_USERS.forEach((usr) => {
             const uniqueKey = usr.username ? usr.username.toLowerCase() : usr.name;
@@ -317,7 +314,6 @@ bot.on('message', async (ctx) => {
     }
 });
 
-// "Танишдим" тугмаси босилганда
 bot.action('tanishdim', async (ctx) => {
     const taskId = `${ctx.chat.id}_${ctx.callbackQuery.message.message_id}`;
     const db = readDB();
@@ -340,7 +336,6 @@ bot.action('tanishdim', async (ctx) => {
     }
 
     if (!foundKey) {
-        // Агар рўйхатда бўлмаса, исми билан янги қўшиб қўямиз
         foundKey = username || userId;
         task.users[foundKey] = { name: safeUserName, username: username, status: 'tanishdi' };
     } else {
@@ -422,16 +417,6 @@ setInterval(() => {
             if (task.deadline > now && (now - (task.lastReminderTime || 0) >= HALF_HOUR)) {
                 task.lastReminderTime = now;
                 dbChanged = true;
-
-                for (const key in task.users) {
-                    const u = task.users[key];
-                    if (u.status === 'tanishmadi' || u.status === 'tanishdi') {
-                        if (u.username) {
-                            // Ботга старт босган бўлса username орқали личкасига ёзиш мумкин ёки эслатма бериш
-                            // Эслатма фақат username орқали бот билан гаплашганларга боради
-                        }
-                    }
-                }
             }
         }
     }
@@ -486,4 +471,4 @@ bot.launch({
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));s
