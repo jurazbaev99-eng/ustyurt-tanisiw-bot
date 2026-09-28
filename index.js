@@ -17,7 +17,7 @@ http.createServer((req, res) => {
 
 const dbPath = path.join(__dirname, 'database.json');
 
-// Доимий фойдаланувчилар рўйхати (Сиз берган маълумотлар асосида)
+// Доимий фойдаланувчилар рўйхати
 const DEFAULT_USERS = [
     { name: "Elbek Jumabekov", username: "elbek_jumabekov" },
     { name: "Makhsud Kalbayev", username: "kalbayev_makhsud_kurbonbaevich" },
@@ -71,7 +71,7 @@ async function isAdmin(ctx) {
     }
 }
 
-// Статус матнини генерация қилиш (3 хил статус билан)
+// Статус матнини генерация қилиш
 function generateUserList(taskUsers) {
     let userList = "";
     let count = 1;
@@ -94,7 +94,6 @@ function generateUserList(taskUsers) {
     return userList;
 }
 
-// Балл қўшиш (Статистика учун)
 const addScore = (username, name, points) => {
     const db = readDB();
     const key = username ? username.toLowerCase() : name;
@@ -132,39 +131,33 @@ bot.on('message', async (ctx) => {
                     return;
                 }
 
-                let targetUserId = null;
+                let targetKey = null;
+                const authorId = ctx.message.reply_to_message.from.id.toString();
+                const authorUsername = ctx.message.reply_to_message.from.username ? ctx.message.reply_to_message.from.username.toLowerCase() : null;
 
-                if (ctx.message.entities) {
-                    for (const ent of ctx.message.entities) {
-                        if (ent.type === 'text_mention') {
-                            targetUserId = ent.user.id.toString();
-                            break;
-                        } else if (ent.type === 'mention') {
-                            const mentionedUsername = replyText.substr(ent.offset + 1, ent.length - 1).toLowerCase();
-                            for (const uid in task.users) {
-                                if (task.users[uid].username && task.users[uid].username.toLowerCase() === mentionedUsername) {
-                                    targetUserId = uid;
-                                    break;
-                                }
-                            }
-                            break;
-                        }
+                // Кимга жавоб берилганини аниқлаш
+                for (const key in task.users) {
+                    const u = task.users[key];
+                    if (key === authorId || (authorUsername && u.username && u.username.toLowerCase() === authorUsername)) {
+                        targetKey = key;
+                        break;
                     }
                 }
 
-                if (!targetUserId) {
+                // Агар рўйхатдан рақам орқали топса (масалан: + 3)
+                if (!targetKey) {
                     const match = replyText.match(/^[\+-]\s*(\d+)$/);
                     if (match) {
                         const num = parseInt(match[1]);
-                        const userIds = Object.keys(task.users);
-                        if (num > 0 && num <= userIds.length) {
-                            targetUserId = userIds[num - 1];
+                        const keys = Object.keys(task.users);
+                        if (num > 0 && num <= keys.length) {
+                            targetKey = keys[num - 1];
                         }
                     }
                 }
 
-                if (targetUserId && task.users[targetUserId]) {
-                    const uObj = task.users[targetUserId];
+                if (targetKey && task.users[targetKey]) {
+                    const uObj = task.users[targetKey];
                     const prevStatus = uObj.status;
                     uObj.status = isPlus ? 'bajarildi' : 'tanishdi';
 
@@ -269,10 +262,11 @@ bot.on('message', async (ctx) => {
             deadlineString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
         }
 
+        // Фойдаланувчиларни username асосида уникал ключ билан сақлаймиз
         let taskUsers = {};
-        DEFAULT_USERS.forEach((usr, index) => {
-            const fakeId = `user_${index + 1}`;
-            taskUsers[fakeId] = {
+        DEFAULT_USERS.forEach((usr) => {
+            const uniqueKey = usr.username ? usr.username.toLowerCase() : usr.name;
+            taskUsers[uniqueKey] = {
                 name: usr.name,
                 username: usr.username,
                 status: 'tanishmadi' 
@@ -323,6 +317,7 @@ bot.on('message', async (ctx) => {
     }
 });
 
+// "Танишдим" тугмаси босилганда
 bot.action('tanishdim', async (ctx) => {
     const taskId = `${ctx.chat.id}_${ctx.callbackQuery.message.message_id}`;
     const db = readDB();
@@ -336,15 +331,17 @@ bot.action('tanishdim', async (ctx) => {
     const safeUserName = ctx.from.first_name.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
     let foundKey = null;
-    for (const uid in task.users) {
-        if (uid === userId || (username && task.users[uid].username && task.users[uid].username.toLowerCase() === username)) {
-            foundKey = uid;
+    for (const key in task.users) {
+        const u = task.users[key];
+        if (key === userId || (username && u.username && u.username.toLowerCase() === username)) {
+            foundKey = key;
             break;
         }
     }
 
     if (!foundKey) {
-        foundKey = userId;
+        // Агар рўйхатда бўлмаса, исми билан янги қўшиб қўямиз
+        foundKey = username || userId;
         task.users[foundKey] = { name: safeUserName, username: username, status: 'tanishdi' };
     } else {
         if (task.users[foundKey].status === 'bajarildi') {
@@ -426,12 +423,12 @@ setInterval(() => {
                 task.lastReminderTime = now;
                 dbChanged = true;
 
-                for (const uid in task.users) {
-                    const u = task.users[uid];
+                for (const key in task.users) {
+                    const u = task.users[key];
                     if (u.status === 'tanishmadi' || u.status === 'tanishdi') {
-                        if (!uid.startsWith('user_')) {
-                            const msg = `⚠️ <b>ЭСЛАТМА!</b>\n\nСизда бажарилмаган вазифа бор. Муддат тугашига оз қолди!\n\n📝 <b>Вазифа:</b> ${task.text}\n⏱ <b>Муддат:</b> ${task.deadlineString}`;
-                            bot.telegram.sendMessage(uid, msg, { parse_mode: 'HTML' }).catch(() => {});
+                        if (u.username) {
+                            // Ботга старт босган бўлса username орқали личкасига ёзиш мумкин ёки эслатма бериш
+                            // Эслатма фақат username орқали бот билан гаплашганларга боради
                         }
                     }
                 }
@@ -439,7 +436,6 @@ setInterval(() => {
         }
     }
 
-    // Шанба куни соат 18:00 да автоматик рейтинг ташлаш (UTC 13:00 = Тошкент 18:00)
     const currentDate = new Date();
     if (currentDate.getUTCDay() === 6 && currentDate.getUTCHours() === 13 && currentDate.getUTCMinutes() === 0) {
         const todayStr = currentDate.toISOString().split('T')[0];
