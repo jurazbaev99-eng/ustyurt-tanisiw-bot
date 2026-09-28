@@ -1,6 +1,5 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const { OpenAI } = require('openai'); // 1. OpenAI kutubxonasi qo'shildi
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
@@ -18,12 +17,33 @@ http.createServer((req, res) => {
 
 const dbPath = path.join(__dirname, 'database.json');
 
+// Доимий фойдаланувчилар рўйхати (Сиз берган маълумотлар асосида)
+const DEFAULT_USERS = [
+    { name: "Elbek Jumabekov", username: "elbek_jumabekov" },
+    { name: "Makhsud Kalbayev", username: "kalbayev_makhsud_kurbonbaevich" },
+    { name: "Timur Daryabayev", username: "daryabayev_timur" },
+    { name: "Ali Jumamuratov", username: "ali_jumamuratov" },
+    { name: "Baxodir", username: "baxodir_6694" },
+    { name: "Sherzod Niyazimbetov", username: "sherzod_niyazimbetov" },
+    { name: "Tilekles Mubarekov", username: "tileklesmubarekov" },
+    { name: "Qurbaniyazov Qayrat", username: "qurbaniyazovqayrat" },
+    { name: "Ergash Jumaniyazov", username: "jumaniyazovergash" },
+    { name: "Saraykol OFY", username: "taxiyatosh_tumani_saraykol_ofy" },
+    { name: "Atabek Saburov", username: null },
+    { name: "Nurbek Tajibayev", username: "nurbek_tajibayev" },
+    { name: "Jasur Urazbaev", username: "jasururazbaev" },
+    { name: "Nilufar Muxammedova", username: "nilufarrmuxammedova" }
+];
+
 const readDB = () => {
     try {
         const data = fs.readFileSync(dbPath, 'utf8');
-        return JSON.parse(data);
+        const parsed = JSON.parse(data);
+        if (!parsed.tasks) parsed.tasks = {};
+        if (!parsed.stats) parsed.stats = {};
+        return parsed;
     } catch (error) {
-        return { tasks: {} };
+        return { tasks: {}, stats: {} };
     }
 };
 
@@ -33,14 +53,9 @@ const writeDB = (data) => {
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// 2. OpenAI API kalitini ulash
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
-
 bot.start((ctx) => {
     if (ctx.chat.type === 'private') {
-        ctx.reply("Ассалому алайкум! Топшириқлар ботига уландингиз.\n\nЭнди гуруҳдаги муҳим вазифалар муддати тугашига 1 соат қолганда мен сизга шу ерда эслатма юбораман!");
+        ctx.reply("Ассалому алайкум! Топшириқлар ботига уландингиз.\n\nЭнди гуруҳдаги муҳим вазифалар бўйича эслатмалар шу ерга келиб туради!");
     } else {
         ctx.reply("Ассалому алайкум! Топшириқлар ботига хуш келибсиз.");
     }
@@ -56,33 +71,40 @@ async function isAdmin(ctx) {
     }
 }
 
-// ==========================================
-// 4. CHATGPT BILAN SUHBAT (/chat) - YANGI QO'SHILGAN QISM
-// ==========================================
-bot.command('chat', async (ctx) => {
-    const userText = ctx.message.text.replace('/chat', '').trim();
-    
-    if (!userText) {
-        return ctx.reply("Илтимос, /chat буйруғидан сўнг саволингизни ёзинг.\nМисол: /chat менга ариза матни тайёрлаб бер.");
+// Статус матнини генерация қилиш (3 хил статус билан)
+function generateUserList(taskUsers) {
+    let userList = "";
+    let count = 1;
+    for (const uid in taskUsers) {
+        const u = taskUsers[uid];
+        let icon = '🔴';
+        let statusText = 'Танишмади';
+
+        if (u.status === 'bajarildi') {
+            icon = '✅';
+            statusText = 'Бажарди';
+        } else if (u.status === 'tanishdi') {
+            icon = '🔵';
+            statusText = 'Танишди';
+        }
+
+        userList += `${count}. ${icon} ${u.name} (${statusText})\n`;
+        count++;
     }
+    return userList;
+}
 
-    const waitMsg = await ctx.reply("⏳ Ўйламоқдаман...");
-
-    try {
-        const completion = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo", 
-            messages: [{ role: "user", content: userText }],
-        });
-
-        const replyText = completion.choices[0].message.content;
-
-        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, null, replyText);
-        
-    } catch (error) {
-        console.error("OpenAI xatosi:", error);
-        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, null, "Кечирасиз, ChatGPT билан уланишда хатолик юз берди 😔");
+// Балл қўшиш (Статистика учун)
+const addScore = (username, name, points) => {
+    const db = readDB();
+    const key = username ? username.toLowerCase() : name;
+    if (!db.stats[key]) {
+        db.stats[key] = { name: name, score: 0, completed: 0 };
     }
-});
+    db.stats[key].score += points;
+    if (points > 0) db.stats[key].completed += 1;
+    writeDB(db);
+};
 
 bot.on('message', async (ctx) => {
     
@@ -142,19 +164,19 @@ bot.on('message', async (ctx) => {
                 }
 
                 if (targetUserId && task.users[targetUserId]) {
-                    task.users[targetUserId].status = isPlus ? 'bajarildi' : 'tanishdi';
-                    writeDB(db);
+                    const uObj = task.users[targetUserId];
+                    const prevStatus = uObj.status;
+                    uObj.status = isPlus ? 'bajarildi' : 'tanishdi';
 
-                    let userList = "";
-                    let count = 1;
-                    for (const uid in task.users) {
-                        const u = task.users[uid];
-                        const icon = u.status === 'bajarildi' ? '✅' : '🔴';
-                        const statusText = u.status === 'bajarildi' ? 'Бажарди' : 'Танишди';
-                        userList += `${count}. ${icon} ${u.name} (${statusText})\n`;
-                        count++;
+                    if (isPlus && prevStatus !== 'bajarildi') {
+                        addScore(uObj.username, uObj.name, 5);
+                    } else if (!isPlus && prevStatus === 'tanishmadi') {
+                        addScore(uObj.username, uObj.name, 1);
                     }
 
+                    writeDB(db);
+
+                    const userList = generateUserList(task.users);
                     const newText = `📋 <b>ЯНГИ ВАЗИФА!</b>\n👤 <b>Топшириқ берувчи:</b> ${task.adminMention}\n\n📝 <b>Вазифа:</b> ${task.text}\n\n<b>Топшириқ ҳолати:</b>\n${userList}`;
 
                     const editOptions = {
@@ -226,7 +248,7 @@ bot.on('message', async (ctx) => {
         const adminMention = `<a href="tg://user?id=${ctx.from.id}">${safeAdminName}</a>`;
         const safeText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-        // --- ВАҚТНИ АЖРАТИБ ОЛИШ (Тошкент вақти ва хоҳланган формат учун созланган) ---
+        // --- ВАҚТНИ АЖРАТИБ ОЛИШ ---
         const timeMatch = text.match(/(?:(?:muddat|муддат)\s*[:\-]?\s*)?(\d{1,2})[:\.](\d{2})/i);
         let deadlineTimestamp = null;
         let deadlineString = null;
@@ -236,7 +258,6 @@ bot.on('message', async (ctx) => {
             const minutes = parseInt(timeMatch[2]);
             const now = new Date();
             
-            // Server Frankfurt (UTC) da ishlagani uchun Toshkent vaqtini (+5 soat) to'g'ri hisoblaymiz
             const deadlineDate = new Date();
             deadlineDate.setUTCHours(hours - 5, minutes, 0, 0);
             
@@ -248,7 +269,18 @@ bot.on('message', async (ctx) => {
             deadlineString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
         }
 
-        const messageContent = `📋 <b>ЯНГИ ВАЗИФА!</b>\n👤 <b>Топшириқ берувчи:</b> ${adminMention}\n\n📝 <b>Вазифа:</b> ${safeText}\n\n<b>Топшириқ ҳолати:</b>\nҲали ҳеч ким танишмади.`;
+        let taskUsers = {};
+        DEFAULT_USERS.forEach((usr, index) => {
+            const fakeId = `user_${index + 1}`;
+            taskUsers[fakeId] = {
+                name: usr.name,
+                username: usr.username,
+                status: 'tanishmadi' 
+            };
+        });
+
+        const userList = generateUserList(taskUsers);
+        const messageContent = `📋 <b>ЯНГИ ВАЗИФА!</b>\n👤 <b>Топшириқ берувчи:</b> ${adminMention}\n\n📝 <b>Вазифа:</b> ${safeText}\n\n<b>Топшириқ ҳолати:</b>\n${userList}`;
 
         let sentMsg;
         const extraOptions = {
@@ -271,6 +303,7 @@ bot.on('message', async (ctx) => {
         const db = readDB();
         const taskId = `${ctx.chat.id}_${sentMsg.message_id}`;
         db.tasks[taskId] = {
+            chatId: ctx.chat.id,
             adminId: ctx.from.id,
             adminMention: adminMention,
             text: safeText,
@@ -278,8 +311,8 @@ bot.on('message', async (ctx) => {
             hasMedia: hasMedia,
             deadline: deadlineTimestamp,
             deadlineString: deadlineString,
-            reminderSent: false,
-            users: {} 
+            lastReminderTime: 0,
+            users: taskUsers 
         };
         writeDB(db);
 
@@ -298,28 +331,36 @@ bot.action('tanishdim', async (ctx) => {
     if (!task) return ctx.answerCbQuery("Бу топшириқ базада топилмади.", { show_alert: true });
     if (task.status === 'closed') return ctx.answerCbQuery("Бу топшириқ ёпилган!", { show_alert: true });
 
-    const userId = ctx.from.id;
+    const userId = ctx.from.id.toString();
+    const username = ctx.from.username ? ctx.from.username.toLowerCase() : null;
     const safeUserName = ctx.from.first_name.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-    if (task.users[userId]) return ctx.answerCbQuery("Сиз аллақачон танишгансиз!", { show_alert: true });
-
-    task.users[userId] = { 
-        name: safeUserName, 
-        username: ctx.from.username || null,
-        status: 'tanishdi' 
-    };
-    writeDB(db);
-
-    let userList = "";
-    let count = 1;
+    let foundKey = null;
     for (const uid in task.users) {
-        const u = task.users[uid];
-        const icon = u.status === 'bajarildi' ? '✅' : '🔴';
-        const statusText = u.status === 'bajarildi' ? 'Бажарди' : 'Танишди';
-        userList += `${count}. ${icon} ${u.name} (${statusText})\n`;
-        count++;
+        if (uid === userId || (username && task.users[uid].username && task.users[uid].username.toLowerCase() === username)) {
+            foundKey = uid;
+            break;
+        }
     }
 
+    if (!foundKey) {
+        foundKey = userId;
+        task.users[foundKey] = { name: safeUserName, username: username, status: 'tanishdi' };
+    } else {
+        if (task.users[foundKey].status === 'bajarildi') {
+            return ctx.answerCbQuery("Сиз бу топшириқни аллақачон бажариб бўлгансиз ✅", { show_alert: true });
+        }
+        if (task.users[foundKey].status === 'tanishdi') {
+            return ctx.answerCbQuery("Сиз аллақачон танишгансиз!", { show_alert: true });
+        }
+        task.users[foundKey].status = 'tanishdi';
+        task.users[foundKey].name = safeUserName;
+    }
+
+    addScore(username, safeUserName, 1);
+    writeDB(db);
+
+    const userList = generateUserList(task.users);
     const newText = `📋 <b>ЯНГИ ВАЗИФА!</b>\n👤 <b>Топшириқ берувчи:</b> ${task.adminMention}\n\n📝 <b>Вазифа:</b> ${task.text}\n\n<b>Топшириқ ҳолати:</b>\n${userList}`;
 
     try {
@@ -349,17 +390,7 @@ bot.action('yopish', async (ctx) => {
     task.status = 'closed';
     writeDB(db);
 
-    let userList = "";
-    let count = 1;
-    for (const uid in task.users) {
-        const u = task.users[uid];
-        const icon = u.status === 'bajarildi' ? '✅' : '🔴';
-        const statusText = u.status === 'bajarildi' ? 'Бажарди' : 'Танишди';
-        userList += `${count}. ${icon} ${u.name} (${statusText})\n`;
-        count++;
-    }
-    if(Object.keys(task.users).length === 0) userList = "Ҳеч ким танишмади.";
-
+    const userList = generateUserList(task.users);
     const newText = `🔒 <b>БУ ТОПШИРИҚ ЁПИЛГАН</b>\n👤 <b>Топшириқ берувчи:</b> ${task.adminMention}\n\n📝 <b>Вазифа:</b> ${task.text}\n\n<b>Якуний ҳолат:</b>\n${userList}`;
 
     try {
@@ -379,39 +410,82 @@ bot.action('yopish', async (ctx) => {
 });
 
 // ==========================================
-// 3. АВТОМАТИК ЕСЛАТМА ТАЙМЕРИ (Кучайтирилган)
+// 3. АВТОМАТИК ЕСЛАТМА ВА ҲАФТАЛИК ЛИДЕРБОАРД ТАЙМЕРИ
 // ==========================================
 setInterval(() => {
     const db = readDB();
     let dbChanged = false;
     const now = Date.now();
-    const ONE_HOUR = 60 * 60 * 1000;
+    const HALF_HOUR = 30 * 60 * 1000;
 
     for (const taskId in db.tasks) {
         const task = db.tasks[taskId];
         
-        if (task.status === 'open' && task.deadline && !task.reminderSent) {
-            const timeLeft = task.deadline - now;
-            
-            if (timeLeft <= ONE_HOUR && timeLeft > 0) {
-                task.reminderSent = true;
+        if (task.status === 'open' && task.deadline) {
+            if (task.deadline > now && (now - (task.lastReminderTime || 0) >= HALF_HOUR)) {
+                task.lastReminderTime = now;
                 dbChanged = true;
 
                 for (const uid in task.users) {
-                    if (task.users[uid].status === 'tanishdi') {
-                        const msg = `⚠️ <b>ЭСЛАТМА!</b>\n\nСизда бажарилмаган вазифа бор. Муддат тугашига <b>1 соат</b> қолди!\n\n📝 <b>Вазифа:</b> ${task.text}\n⏱ <b>Муддат:</b> ${task.deadlineString}`;
-                        
-                        bot.telegram.sendMessage(uid, msg, { parse_mode: 'HTML' }).catch(() => {});
+                    const u = task.users[uid];
+                    if (u.status === 'tanishmadi' || u.status === 'tanishdi') {
+                        if (!uid.startsWith('user_')) {
+                            const msg = `⚠️ <b>ЭСЛАТМА!</b>\n\nСизда бажарилмаган вазифа бор. Муддат тугашига оз қолди!\n\n📝 <b>Вазифа:</b> ${task.text}\n⏱ <b>Муддат:</b> ${task.deadlineString}`;
+                            bot.telegram.sendMessage(uid, msg, { parse_mode: 'HTML' }).catch(() => {});
+                        }
                     }
                 }
             }
         }
     }
+
+    // Шанба куни соат 18:00 да автоматик рейтинг ташлаш (UTC 13:00 = Тошкент 18:00)
+    const currentDate = new Date();
+    if (currentDate.getUTCDay() === 6 && currentDate.getUTCHours() === 13 && currentDate.getUTCMinutes() === 0) {
+        const todayStr = currentDate.toISOString().split('T')[0];
+        if (db.lastLeaderboardDate !== todayStr) {
+            db.lastLeaderboardDate = todayStr;
+            dbChanged = true;
+
+            const statsArr = Object.values(db.stats || {});
+            if (statsArr.length > 0) {
+                statsArr.sort((a, b) => b.score - a.score);
+
+                const top3 = statsArr.slice(0, 3);
+                const antiTop3 = statsArr.slice(-3).reverse();
+
+                let report = `🏆 <b>ҲАФТАЛИК РЕЙТИНГ ЖАДВАЛИ (ТОП & АНТИ-ТОП)</b>\n\n`;
+                
+                report += `🥇 <b>Энг фаол ва топшириқларни бажарганлар:</b>\n`;
+                top3.forEach((item, idx) => {
+                    report += `${idx + 1}. ${item.name} — ${item.score} балл (${item.completed} та бажарилган)\n`;
+                });
+
+                report += `\n📉 <b>Энг паст кўрсаткичга эга бўлганлар:</b>\n`;
+                antiTop3.forEach((item, idx) => {
+                    report += `${idx + 1}. ${item.name} — ${item.score} балл\n`;
+                });
+
+                const chatIds = new Set();
+                for (const tid in db.tasks) {
+                    if (db.tasks[tid].chatId) chatIds.add(db.tasks[tid].chatId);
+                }
+
+                chatIds.forEach(chatId => {
+                    bot.telegram.sendMessage(chatId, report, { parse_mode: 'HTML' }).catch(() => {});
+                });
+
+                db.stats = {};
+            }
+        }
+    }
     
     if (dbChanged) writeDB(db);
-}, 30000);
+}, 60000);
 
-bot.launch().then(() => {
+bot.launch({
+    dropPendingUpdates: true
+}).then(() => {
     console.log("Bot muvaffaqiyatli ishga tushdi...");
 });
 
